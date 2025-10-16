@@ -1,9 +1,9 @@
 {
-  "name": "Top 6 Tabs Organizer",
-  "description": "Keeps your 6 most-used tabs prioritized (leftmost or pinned).",
-  "version": "1.0.0",
-  "manifest_version": 3,
-  "permissions": ["tabs", "storage"],
-  "background": { "service_worker": "bg.js" },
-  "action": { "default_title": "Organize Top 6 Tabs" }
+  "name": "Top 6 Tabs Organizer", // Extension name
+  "description": "Keeps your 6 most-used tabs prioritized (leftmost or pinned).", // Extension description
+  "version": "1.0.0", // Extension version
+  "manifest_version": 3, // Manifest version
+  "permissions": ["tabs", "storage"], // Required permissions
+  "background": { "service_worker": "bg.js" }, // Background script
+  "action": { "default_title": "Organize Top 6 Tabs" }// Action button title
 }

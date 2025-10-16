@@ -22,8 +22,9 @@ function scheduleReorder(windowId) {// schedule a reorder for the given windowId
     reorderWindow(windowId).catch(() => {});// ignore errors
   }, REORDER_DELAY_MS);
 }
-// Get the top N tabs by usage score in the given window.
 
+
+// Get the top N tabs by usage score in the given window.
 
 async function getTopNTabs(windowId, n) {
   const tabs = await chrome.tabs.query({ windowId });// all tabs in the window
@@ -61,7 +62,9 @@ async function reorderWindow(windowId) {
     let i = 0; // target index for pinned tabs
     // Move each top tab to the next index
     for (const t of top) {
-      try { await chrome.tabs.move(t.id, { index: i++ }); } catch {}
+        
+      try { await chrome.tabs.move(t.id, { index: i++ }); } catch {} // ignore move failures (e.g., chrome:// tabs)// increment target index
+      
     }
     return;// done if pinning
   }
