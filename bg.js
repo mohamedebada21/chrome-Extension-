@@ -2,6 +2,8 @@
 const TOP_N_DEFAULT = 6;          // how many tabs to prioritize
 const REORDER_DELAY_MS = 1200;    ///wait 1.2s after activity to avoid jittery reorders.
 const PIN_TOP = false;            // the top N get pinned to the left (true/false)
+const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 10 min before snoozing
+const KEEP_MODIFIED_AWAKE = false;
 // ==================================
 
 /**
@@ -10,6 +12,7 @@ const PIN_TOP = false;            // the top N get pinned to the left (true/fals
  */
 const usage = {}; // per-window tab usage scores
 const timers = {}; // per-window debouncers
+const modifiedTabs = {}; // per-window "dirty" check for inputs
 
 
 
@@ -53,7 +56,7 @@ async function reorderWindow(windowId) {
     const top = await getTopNTabs(windowId, N);
 
 
-// Pinning mode: top-N are pinned; everyone else unpinned. If PIN_TOP is true, pin the top-N tabs and unpin the rest
+ // Pinning mode: top-N are pinned; everyone else unpinned. If PIN_TOP is true, pin the top-N tabs and unpin the rest
   if (PIN_TOP) {
     // Pin the top-N and unpin the rest (optional behavior)
     const topSet = new Set(top.map(t => t.id));// IDs of top N tabs
@@ -88,6 +91,25 @@ async function reorderWindow(windowId) {
       /* ignore move failures (e.g., chrome:// tabs) */
     }
   }
+
+  // --- Snooze inactive tabs beyond top-N ---
+const now = Date.now();
+usage[windowId] = usage[windowId] || {};
+const topSet = new Set(top.map(t => t.id));
+
+for (const t of allTabs) {
+  if (topSet.has(t.id)) continue; // skip top N
+  if (modifiedTabs[t.id] || KEEP_MODIFIED_AWAKE === true) continue;
+  const lastActive = usage[windowId][t.id]?.lastUsed || 0;
+  if (now - lastActive > INACTIVITY_LIMIT_MS) {
+    try {
+      await chrome.tabs.discard(t.id);
+      console.log(`Snoozed tab: ${t.title}`);
+    } catch (e) {
+      console.warn(`Could not snooze tab ${t.title}:`, e);
+    }
+  }
+}
 }
 
 // --- Listeners to track usage ---
@@ -98,29 +120,56 @@ async function reorderWindow(windowId) {
 
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   usage[windowId] = usage[windowId] || {};// ensure window entry
-  usage[windowId][tabId] = (usage[windowId][tabId] || 0) + 1;// increment score
+  const data = usage[windowId][tabId] || { score: 0, lastUsed: Date.now() };
+  data.score += 1;// increment score
+  data.lastUsed = Date.now();
+  usage[windowId][tabId] = data;
   scheduleReorder(windowId);// schedule reorder
 });
 
 // When the active tab finishes loading, give it a smaller bump (+0.5).
 //Then schedule a reorder.
 
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    // only care about completed loads of the active tab
+  // only care about completed loads of the active tab
   if (changeInfo.status === "complete" && tab.active) {
     const w = tab.windowId;// window ID
     usage[w] = usage[w] || {};// ensure window entry
-    usage[w][tabId] = (usage[w][tabId] || 0) + 0.5;// increment score
+    const data = usage[w][tabId] || { score: 0, lastUsed: Date.now() };
+    data.score += 0.5;// increment score
+    data.lastUsed = Date.now();
+    usage[w][tabId] = data;
     scheduleReorder(w);// schedule reorder
+
+    // Detect user modification
+     try {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: (id) => {
+          document.addEventListener(
+            "input",
+            () => {
+              chrome.runtime.sendMessage({ type: "tabModified", tabId: id });
+            },
+            { once: true }
+          );
+        },
+        args: [tabId],
+      });
+    } catch (e) {
+      console.warn("Could not inject input listener:", e);
+    }
   }
 });
+
 // When a window is removed, clean up its usage data // Clean up score table when a tab closes.
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   const w = removeInfo.windowId;
   if (usage[w]) delete usage[w][tabId];
 });
+
 // When a tab is moved to a new window, clean up its usage data in the old window 
-//Clean up when a tab is dragged out to another window.
 chrome.tabs.onDetached.addListener((tabId, { oldWindowId }) => {
   if (usage[oldWindowId]) delete usage[oldWindowId][tabId];
 });
@@ -130,3 +179,6 @@ chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || tab.windowId == null) return;
   await reorderWindow(tab.windowId);
 });
+
+// work on sleeping the outer six tabs to kill their memory usage
+// check for if user inout has updated the tabs
