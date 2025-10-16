@@ -13,7 +13,8 @@ const KEEP_MODIFIED_AWAKE = false;
 const usage = {}; // per-window tab usage scores
 const timers = {}; // per-window debouncers
 const modifiedTabs = {}; // per-window "dirty" check for inputs
-
+const overflow = [];
+const snoozed = [];
 
 
 // Schedule a reorder of tabs in the given window after a short delay.
@@ -80,7 +81,7 @@ async function reorderWindow(windowId) {
   await chrome.storage.local.set({ snoozableTabs: existing });
 
   console.log(`Saved ${snoozable.length} snoozable tabs for window ${windowId}`);
-}
+ }
 
  // Pinning mode: top-N are pinned; everyone else unpinned. If PIN_TOP is true, pin the top-N tabs and unpin the rest
   if (PIN_TOP) {
@@ -118,30 +119,86 @@ async function reorderWindow(windowId) {
     }
   }
 
-  // --- Snooze inactive tabs beyond top-N ---
+  // --- Seperate lists ---
 const now = Date.now();
 usage[windowId] = usage[windowId] || {};
 const topSet = new Set(top.map(t => t.id));
 
+const overflowTabs = [];
+const snoozedTabs = [];
+
 for (const t of allTabs) {
-  if (topSet.has(t.id)) continue; // skip top N
-  if (modifiedTabs[t.id] || KEEP_MODIFIED_AWAKE === true) continue;
+  if (topSet.has(t.id)) continue;
+  if (modifiedTabs[t.id] || KEEP_MODIFIED_AWAKE === true) {
+    overflowTabs.push({
+      id: t.id,
+      title: t.title,
+      url: t.url,
+      windowId,
+      lastUsed: usage[windowId][t.id]?.lastUsed || now,
+      inactiveTime: now - (usage[windowId][t.id]?.lastUsed || now),
+      discarded: t.discarded || false
+    });
+    continue;
+  }
+
   const lastActive = usage[windowId][t.id]?.lastUsed || 0;
-  if (now - lastActive > INACTIVITY_LIMIT_MS) {
+  const inactiveTime = now - lastActive;
+
+  const tabInfo = {
+    id: t.id,
+    title: t.title,
+    url: t.url,
+    windowId,
+    lastUsed: lastActive,
+    inactiveTime,
+    discarded: t.discarded || false
+  };
+
+  if (inactiveTime > INACTIVITY_LIMIT_MS) {
+    // Snooze the tab
     try {
       await chrome.tabs.discard(t.id);
+      tabInfo.discarded = true;
       console.log(`Snoozed tab: ${t.title}`);
     } catch (e) {
       console.warn(`Could not snooze tab ${t.title}:`, e);
     }
+    snoozedTabs.push(tabInfo);
+  } else {
+    overflowTabs.push(tabInfo);
   }
 }
-await saveSnoozableTabs(windowId, allTabs, top);
+
+// Save both lists
+await saveOverflowAndSnoozed(windowId, overflowTabs, snoozedTabs);
+
+}
+
+async function saveOverflowAndSnoozed(windowId, overflowTabs, snoozedTabs) {
+  const existing = await chrome.storage.local.get(["overflowTabs", "snoozedTabs"]);
+  const overflowData = existing.overflowTabs || {};
+  const snoozedData = existing.snoozedTabs || {};
+
+  overflowData[windowId] = {
+    updated: Date.now(),
+    tabs: overflowTabs
+  };
+
+  snoozedData[windowId] = {
+    updated: Date.now(),
+    tabs: snoozedTabs
+  };
+
+  await chrome.storage.local.set({
+    overflowTabs: overflowData,
+    snoozedTabs: snoozedData
+  });
+
+  console.log(`Saved ${overflowTabs.length} overflow and ${snoozedTabs.length} snoozed tabs for window ${windowId}`);
 }
 
 // --- Listeners to track usage ---
-
-
 //Every time you switch to a tab, that tab’s score +1.
 //Then we schedule a (debounced) reorder for that window.
 
