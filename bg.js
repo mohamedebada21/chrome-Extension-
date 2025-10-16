@@ -54,7 +54,33 @@ async function reorderWindow(windowId) {
 
   // Get the top-N tabs by usage score
     const top = await getTopNTabs(windowId, N);
+  
+  
+  
+  async function saveSnoozableTabs(windowId, allTabs, topTabs) {
+  const topSet = new Set(topTabs.map(t => t.id));
 
+  // Filter out the active ones
+  const snoozable = allTabs
+    .filter(t => !topSet.has(t.id))
+    .map(t => ({
+      id: t.id,
+      title: t.title,
+      url: t.url,
+      windowId,
+      discarded: t.discarded || false
+    }));
+  const existing = (await chrome.storage.local.get("snoozableTabs")).snoozableTabs || {};
+
+  existing[windowId] = {
+    updated: Date.now(),
+    tabs: snoozable
+  };
+
+  await chrome.storage.local.set({ snoozableTabs: existing });
+
+  console.log(`Saved ${snoozable.length} snoozable tabs for window ${windowId}`);
+}
 
  // Pinning mode: top-N are pinned; everyone else unpinned. If PIN_TOP is true, pin the top-N tabs and unpin the rest
   if (PIN_TOP) {
@@ -110,6 +136,7 @@ for (const t of allTabs) {
     }
   }
 }
+await saveSnoozableTabs(windowId, allTabs, top);
 }
 
 // --- Listeners to track usage ---
@@ -162,6 +189,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
   }
 });
+
 
 // When a window is removed, clean up its usage data // Clean up score table when a tab closes.
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
