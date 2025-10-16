@@ -40,25 +40,33 @@ async function getTopNTabs(windowId, n) {
 }
 // Reorder tabs in the given window so that the top N by usage score are at the front.
 
+//Reads a user-saved topN (if set), falling back to 6.
+///Gets all tabs; early exit if none.
+//Computes the current top-N.
 async function reorderWindow(windowId) {
   const { topN } = await chrome.storage.local.get("topN");// get user setting
   const N = topN || TOP_N_DEFAULT;// default if not set
-
   const allTabs = await chrome.tabs.query({ windowId });// all tabs in the window
-  if (!allTabs.length) return;// nothing to do
+  if (!allTabs.length) return; // nothing to do if no tabs
 
   // Get the top-N tabs by usage score
+    const top = await getTopNTabs(windowId, N);
 
-  const top = await getTopNTabs(windowId, N);// top N tabs by score
-// If PIN_TOP is true, pin the top-N tabs and unpin the rest
+
+// Pinning mode: top-N are pinned; everyone else unpinned. If PIN_TOP is true, pin the top-N tabs and unpin the rest
   if (PIN_TOP) {
     // Pin the top-N and unpin the rest (optional behavior)
     const topSet = new Set(top.map(t => t.id));// IDs of top N tabs
+
+    
     // Update pin state of all tabs in parallel
+    //Promise.allSettled guards against special tabs that can’t be updated.
+
     await Promise.allSettled(
       allTabs.map(t => chrome.tabs.update(t.id, { pinned: topSet.has(t.id) }))
     );// ignore individual failures
-    // Optionally move pinned tabs to the far left in the same visual order:
+
+    //  move pinned tabs to the far left in the same visual order:
     let i = 0; // target index for pinned tabs
     // Move each top tab to the next index
     for (const t of top) {
@@ -84,13 +92,19 @@ async function reorderWindow(windowId) {
 
 // --- Listeners to track usage ---
 
-// When a tab is activated, increase its score and schedule a reorder
+
+//Every time you switch to a tab, that tab’s score +1.
+//Then we schedule a (debounced) reorder for that window.
+
 chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
   usage[windowId] = usage[windowId] || {};// ensure window entry
   usage[windowId][tabId] = (usage[windowId][tabId] || 0) + 1;// increment score
   scheduleReorder(windowId);// schedule reorder
 });
-// When a tab finishes loading while active, increase its score and schedule a reorder
+
+// When the active tab finishes loading, give it a smaller bump (+0.5).
+//Then schedule a reorder.
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     // only care about completed loads of the active tab
   if (changeInfo.status === "complete" && tab.active) {
@@ -100,17 +114,18 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     scheduleReorder(w);// schedule reorder
   }
 });
-// When a window is removed, clean up its usage data
+// When a window is removed, clean up its usage data // Clean up score table when a tab closes.
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   const w = removeInfo.windowId;
   if (usage[w]) delete usage[w][tabId];
 });
-// When a tab is moved to a new window, clean up its usage data in the old window
+// When a tab is moved to a new window, clean up its usage data in the old window 
+//Clean up when a tab is dragged out to another window.
 chrome.tabs.onDetached.addListener((tabId, { oldWindowId }) => {
   if (usage[oldWindowId]) delete usage[oldWindowId][tabId];
 });
 
-// Click the toolbar icon to force an immediate sort for the current window
+// Clicking the toolbar button forces an immediate sort for the current window
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || tab.windowId == null) return;
   await reorderWindow(tab.windowId);
