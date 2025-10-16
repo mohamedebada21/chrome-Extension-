@@ -1,0 +1,1 @@
+Go to chrome://extensions → enable Developer mode → Load unpacked → choose the folder.
