@@ -1,0 +1,9 @@
+{
+  "name": "Top 6 Tabs Organizer",
+  "description": "Keeps your 6 most-used tabs prioritized (leftmost or pinned).",
+  "version": "1.0.0",
+  "manifest_version": 3,
+  "permissions": ["tabs", "storage"],
+  "background": { "service_worker": "bg.js" },
+  "action": { "default_title": "Organize Top 6 Tabs" }
+}
